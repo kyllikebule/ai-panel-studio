@@ -1,10 +1,10 @@
 """嘉宾模板 CRUD API。"""
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
 
-from ...db.database import async_session
+from ...db.dependencies import get_db
 from ...db.models import Guest
 
 router = APIRouter(prefix="/api/guests", tags=["guests"])
@@ -38,12 +38,6 @@ class GuestResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# === 依赖：获取 DB 会话 ===
-async def get_db() -> AsyncSession:
-    async with async_session() as session:
-        yield session
 
 
 # === 路由 ===

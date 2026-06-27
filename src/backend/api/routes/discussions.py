@@ -2,10 +2,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
 
-from ...db.database import async_session
+from ...db.dependencies import get_db
 from ...db.models import Discussion, Host, Guest, DiscussionGuest, Message, Opinion
 
 router = APIRouter(prefix="/api/discussions", tags=["discussions"])
@@ -78,12 +77,6 @@ class OpinionResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# === 依赖 ===
-async def get_db() -> AsyncSession:
-    async with async_session() as session:
-        yield session
 
 
 # === 讨论 CRUD ===
