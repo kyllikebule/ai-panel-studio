@@ -202,14 +202,50 @@ async function generateGuests() {
 }
 
 // ═══════════════════════════════════════
-// 进入演播厅（静态占位）
+// 进入演播厅：创建讨论 → 创建嘉宾模板 → 关联嘉宾 → 跳转演播厅
 // ═══════════════════════════════════════
 async function enterStudio() {
   entering.value = true
-  await new Promise(r => setTimeout(r, 600))
-  entering.value = false
-  // 静态暂跳转回首页，后续子任务补齐演播厅路由后对接
-  router.push('/')
+  try {
+    // 1. POST /api/discussions → 创建讨论（含主持人）
+    const dRes = await fetch('/api/discussions/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: topic.value,
+        host: {
+          name: '张主持人',
+          system_prompt: '你是专业讨论主持人，保持中立，用标准中文开场、追问、串联、总结。',
+        },
+        max_rounds: expertCount.value,
+      }),
+    })
+    const discussion = await dRes.json()
+
+    // 2. 逐个创建嘉宾模板 + 关联到讨论
+    for (const guest of guestPreviews.value) {
+      const gRes = await fetch('/api/guests/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: guest.name,
+          persona: guest.persona,
+          system_prompt: `你是${guest.name}，${guest.persona}。发言风格：${guest.speakStyle}`,
+          speak_style: guest.speakStyle,
+        }),
+      })
+      const g = await gRes.json()
+      await fetch(`/api/discussions/${discussion.id}/guests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guest_id: g.id }),
+      })
+    }
+
+    router.push(`/studio/${discussion.id}`)
+  } finally {
+    entering.value = false
+  }
 }
 </script>
 
