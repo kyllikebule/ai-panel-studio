@@ -97,6 +97,8 @@
   --color-accent-hover: var(--pr-color-cyan-400);
   --color-accent-muted: var(--pr-color-cyan-600);
   --color-accent-glow: var(--pr-color-cyan-alpha-30);
+  --color-accent-cyan: var(--pr-color-cyan-500);
+  --color-accent-gold: var(--pr-color-gold-500);
 
   --color-text-primary: #e5e7eb;
   --color-text-secondary: var(--pr-color-gray-400);
