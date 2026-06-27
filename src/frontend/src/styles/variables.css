@@ -99,6 +99,7 @@
   --color-accent-glow: var(--pr-color-cyan-alpha-30);
   --color-accent-cyan: var(--pr-color-cyan-500);
   --color-accent-gold: var(--pr-color-gold-500);
+  --color-role-host: var(--pr-color-gold-500);
 
   --color-text-primary: #e5e7eb;
   --color-text-secondary: var(--pr-color-gray-400);
@@ -114,6 +115,9 @@
 
   --color-divider: var(--pr-color-white-alpha-06);
   --color-divider-glow: var(--pr-color-cyan-alpha-15);
+
+  --grid-gap: 1px;
+  --grid-divider: 1px solid rgba(0, 212, 255, 0.30);
 
   --color-consensus: var(--pr-color-green-500);
   --color-consensus-bg: rgba(16, 185, 129, 0.10);
