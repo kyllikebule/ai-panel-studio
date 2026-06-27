@@ -19,9 +19,9 @@ const router = createRouter({
       component: () => import('@/views/GuestConfigPage.vue'),
     },
     {
-      path: '/studio/:discussionId',
+      path: '/studio/:discId',
       name: 'studio',
-      component: () => import('@/views/StudioPage.vue'),
+      component: () => import('@/views/Studio.vue'),
     },
   ],
 })
