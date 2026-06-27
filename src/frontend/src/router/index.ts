@@ -9,6 +9,11 @@ const router = createRouter({
       component: () => import('@/views/Home.vue'),
     },
     {
+      path: '/create-discuss',
+      name: 'create-discuss',
+      component: () => import('@/views/CreateDiscuss.vue'),
+    },
+    {
       path: '/config/:discussionId?',
       name: 'config',
       component: () => import('@/views/GuestConfigPage.vue'),

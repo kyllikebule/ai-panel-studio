@@ -6,7 +6,7 @@
         <span class="topbar-logo">APS</span>
         <h1 class="topbar-title">AI Panel Studio</h1>
       </div>
-      <el-button type="primary" size="large" @click="$router.push('/config')">
+      <el-button type="primary" size="large" @click="$router.push('/create-discuss')">
         <el-icon><Plus /></el-icon>
         新建讨论
       </el-button>
