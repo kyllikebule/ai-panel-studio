@@ -311,6 +311,33 @@ body {
   border-color: var(--color-accent);
 }
 
+/* Element Plus 深色补充覆盖 */
+.el-dialog {
+  --el-dialog-bg-color: var(--color-bg-secondary);
+}
+.el-select-dropdown,
+.el-select-dropdown__item {
+  background-color: var(--color-bg-secondary);
+}
+.el-select-dropdown__item:hover {
+  background-color: var(--pr-color-white-alpha-08);
+}
+.el-popover {
+  background: var(--color-bg-secondary);
+  border: var(--card-border);
+}
+.el-loading-mask {
+  background-color: rgba(10, 14, 23, 0.7);
+}
+.el-button--default {
+  --el-button-bg-color: var(--pr-color-white-alpha-08);
+  --el-button-border-color: var(--color-border-strong);
+  --el-button-text-color: var(--color-text-primary);
+}
+.el-button--default:hover {
+  --el-button-bg-color: var(--pr-color-white-alpha-15);
+}
+
 /* ── Reduced Motion ── */
 @media (prefers-reduced-motion: reduce) {
   *,

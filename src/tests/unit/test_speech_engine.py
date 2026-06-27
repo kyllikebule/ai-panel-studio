@@ -155,3 +155,53 @@ class TestGenerateSpeech:
             speech = await generate_speech(guest, transcript, "补充", "AI监管")
 
         assert len(speech) <= 200, f"发言 {len(speech)} 字，超过 200 字限制"
+
+
+# ═══════════════════════════════════════════════════════════
+# 测试 3: generate_host_summary 主持人总结
+# ═══════════════════════════════════════════════════════════
+class TestGenerateHostSummary:
+    """主持人总结 — ≤ 500 字 + 四段标签。"""
+
+    @pytest.fixture
+    def transcript(self):
+        return [
+            {"role": "host", "sender_name": "主持人", "content": "欢迎各位讨论AI监管"},
+            {"role": "guest", "sender_name": "李教授", "content": "高风险AI必须严格监管"},
+            {"role": "guest", "sender_name": "王博士", "content": "过度监管会扼杀创新"},
+            {"role": "guest", "sender_name": "张律师", "content": "建议分层分级监管"},
+        ]
+
+    @pytest.fixture
+    def opinions(self):
+        return [
+            {"category": "consensus", "stanceSummary": "对高风险AI必须监管"},
+            {"category": "disagreement", "stanceSummary": "监管力度存在分歧"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_summary_under_500_chars(self, transcript, opinions):
+        """主持人总结 ≤ 500 字。"""
+        from src.backend.services.speech_engine import generate_host_summary
+
+        mock_summary = (
+            "1. 核心观点：李教授强调安全底线，王博士关注创新。\n"
+            "2. 共识：各方认同高风险AI需要监管。\n"
+            "3. 分歧：监管力度存在争议。\n"
+            "4. 总结：AI监管需要平衡安全与创新。"
+        )
+
+        with patch(
+            "src.backend.services.speech_engine.deepseek_chat",
+            new_callable=AsyncMock,
+        ) as mock_llm:
+            mock_llm.return_value = {
+                "choices": [{"message": {"content": mock_summary}}]
+            }
+            result = await generate_host_summary(transcript, opinions, "AI监管")
+
+        assert len(result) <= 500, f"总结 {len(result)} 字，超过 500 字限制"
+        # 验证四段标签存在
+        assert "核心观点" in result or "1." in result
+        assert "共识" in result or "2." in result
+        assert "分歧" in result or "3." in result

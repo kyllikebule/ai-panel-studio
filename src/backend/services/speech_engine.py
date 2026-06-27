@@ -152,6 +152,75 @@ async def generate_speech(
     return speech
 
 
+async def generate_host_summary(
+    transcript: list[dict],
+    opinions: list,
+    topic: str,
+) -> str:
+    """基于完整 transcript + 提炼的共识/分歧 → 生成标准中文总结，≤ 500 字。
+
+    输出四段式：核心观点 → 共识 → 分歧 → 总结语。
+
+    Args:
+        transcript: 完整消息列表
+        opinions: 已提炼观点（OpinionResult 列表）
+        topic: 讨论主题
+
+    Returns:
+        ≤ 500 字的中文总结
+    """
+    from src.backend.services.opinion_extractor import OpinionResult
+
+    # 组装 transcript 文本
+    transcript_text = "\n".join(
+        f"[{m.get('role', '')}] {m.get('sender_name', m.get('senderName', ''))}: "
+        f"{m.get('content', '')}"
+        for m in transcript[-20:]
+    )
+
+    # 组装观点文本
+    opinions_text = "\n".join(
+        f"- [{op.category}] {op.stance_summary}"
+        if isinstance(op, OpinionResult)
+        else f"- [{op.get('category', '')}] {op.get('stanceSummary', op.get('stance_summary', ''))}"
+        for op in opinions
+    ) if opinions else "暂无提炼观点"
+
+    prompt = (
+        f"你是讨论主持人。请基于以下内容，用标准中文总结整场讨论（≤500字）。\n\n"
+        f"讨论主题：{topic}\n\n"
+        f"完整发言记录：\n{transcript_text}\n\n"
+        f"已提炼观点：\n{opinions_text}\n\n"
+        f"请按以下四段式输出：\n"
+        f"1. 各方核心观点（简要概括每位嘉宾的核心主张）\n"
+        f"2. 达成的共识（列出各方一致同意的点）\n"
+        f"3. 仍存的分歧（列出各方观点不同的点）\n"
+        f"4. 总结语（一句话总结整场讨论）\n\n"
+        f"要求：用自然段落书写，不要用 Markdown 编号列表。"
+    )
+
+    messages = [{"role": "user", "content": prompt}]
+
+    try:
+        result = await deepseek_chat(
+            messages=messages,
+            model="deepseek-chat",
+            temperature=0.5,
+            max_tokens=1024,
+        )
+    except Exception as e:
+        logger.error("总结生成 LLM 调用失败: %s", e)
+        return f"（总结生成失败：{e}）"
+
+    summary = result["choices"][0]["message"]["content"].strip()
+
+    # 硬约束：≤ 500 字
+    if len(summary) > 500:
+        summary = summary[:500]
+
+    return summary
+
+
 async def run_discussion_round(discussion_id: int) -> list[dict]:
     """编排单轮讨论：决策 → 生成 → 返回消息列表。
 

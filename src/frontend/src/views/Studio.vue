@@ -7,6 +7,23 @@
       </el-button>
       <h2 class="studio-topic">{{ topic }}</h2>
       <span class="studio-round">第 {{ currentRound }} / {{ maxRounds }} 轮</span>
+      <div class="studio-actions">
+        <el-button
+          v-if="status === 'idle'"
+          type="primary" size="small"
+          @click="ws?.send(JSON.stringify({action:'start'}))"
+        >
+          开始讨论
+        </el-button>
+        <el-button
+          v-if="status === 'active'"
+          size="small"
+          @click="ws?.send(JSON.stringify({action:'stop'}))"
+        >
+          结束讨论
+        </el-button>
+        <el-tag v-if="status === 'done'" type="success" size="small">已完成</el-tag>
+      </div>
     </header>
 
     <!-- ═══ 主体：左右分栏 + 底部总结 ═══ -->
@@ -111,145 +128,156 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import ChatMessage from '@/components/ChatMessage.vue'
 import GuestCard from '@/components/GuestCard.vue'
 import OpinionItem from '@/components/OpinionItem.vue'
 
+const route = useRoute()
+
 // ═══════════════════════════════════════
 // 角色色板
 // ═══════════════════════════════════════
 const ROLE_COLORS = [
-  '#f0b90b', // Gold
-  '#3b82f6', // Blue
-  '#10b981', // Green
-  '#a855f7', // Purple
-  '#f97316', // Orange
-  '#00d4ff', // Cyan
+  '#f0b90b', '#3b82f6', '#10b981', '#a855f7', '#f97316', '#00d4ff',
 ]
 
 // ═══════════════════════════════════════
-// 讨论元信息
+// 讨论状态
 // ═══════════════════════════════════════
 const topic = ref('AI 是否应该被严格监管？')
-const currentRound = ref(2)
+const currentRound = ref(0)
 const maxRounds = ref(5)
-const speakingIndex = ref<number | null>(0)
+const status = ref<'idle' | 'active' | 'done'>('idle')
+const speakingIndex = ref<number | null>(null)
 const summaryReady = ref(false)
 const summaryText = ref('')
 const transcriptRef = ref<HTMLElement | null>(null)
+let ws: WebSocket | null = null
+let msgSeq = 0
 
 // ═══════════════════════════════════════
-// 消息列表（静态演示数据）
+// 数据容器（初始为空，由 WS 填充）
 // ═══════════════════════════════════════
 interface StudioMessage {
-  id: number
-  senderName: string
-  senderRole: 'host' | 'guest' | 'system'
-  content: string
-  senderColor: string
-  seqNum: number
-  tokenCount?: number
-  time: string
-  isStreaming?: boolean
+  id: number; senderName: string; senderRole: 'host'|'guest'|'system'
+  content: string; senderColor: string; seqNum: number
+  tokenCount?: number; time: string; isStreaming?: boolean
 }
-
-const messages = ref<StudioMessage[]>([
-  {
-    id: 1, senderName: '张主持人', senderRole: 'host',
-    content: '各位嘉宾好，今天我们讨论的主题是"AI 是否应该被严格监管"。这是一个备受关注的话题，让我们先请李教授谈谈您的看法。',
-    senderColor: ROLE_COLORS[0], seqNum: 1, tokenCount: 68, time: '14:00',
-  },
-  {
-    id: 2, senderName: '李教授', senderRole: 'guest',
-    content: '谢谢主持人。我认为对于高风险 AI 应用，严格的监管是必要的。医疗诊断、自动驾驶等领域涉及生命安全，我们不能让算法在黑箱中做出可能致命的决策。',
-    senderColor: ROLE_COLORS[1], seqNum: 2, tokenCount: 82, time: '14:02',
-  },
-  {
-    id: 3, senderName: '王博士', senderRole: 'guest',
-    content: '我理解李教授的担忧，但也想提醒大家——过度监管可能会扼杀创新。AI 的发展速度极快，如果监管框架过于僵化，优秀的初创公司可能根本没有资源来满足复杂的合规要求。',
-    senderColor: ROLE_COLORS[2], seqNum: 3, tokenCount: 91, time: '14:04',
-  },
-  {
-    id: 4, senderName: '张律师', senderRole: 'guest',
-    content: '从法律实务角度看，目前最大的问题不是"要不要监管"，而是"如何监管"。我们需要分层分级的监管体系——对高风险应用严格审批，对低风险应用备案即可。这样既保护了公众安全，也给创新留出了空间。',
-    senderColor: ROLE_COLORS[3], seqNum: 4, tokenCount: 105, time: '14:06',
-  },
-  {
-    id: 5, senderName: '张主持人', senderRole: 'host',
-    content: '张律师提出了一个很好的中间路径——分层分级监管。赵研究员，您在产业政策方面有深入研究，您怎么看这种"按风险等级分级管理"的思路？',
-    senderColor: ROLE_COLORS[0], seqNum: 5, tokenCount: 72, time: '14:08',
-  },
-  {
-    id: 6, senderName: '赵研究员', senderRole: 'guest',
-    content: '分级管理的思路是可行的。欧盟的 AI Act 就是按照风险等级来分类监管的。我们可以借鉴，但要结合中国的产业特点。建议将监管重点放在算法的可解释性和数据的合规性上，而不是过度的前置审批。',
-    senderColor: ROLE_COLORS[4], seqNum: 6, tokenCount: 97, time: '14:10',
-  },
-])
-
-// ═══════════════════════════════════════
-// 嘉宾列表
-// ═══════════════════════════════════════
 interface StudioGuest {
-  name: string
-  profession: string
-  thinkSummary?: string
+  name: string; profession: string; thinkSummary?: string
 }
-
-const guests = ref<StudioGuest[]>([
-  { name: '张主持人', profession: '资深媒体人 / 讨论主持', thinkSummary: '正在引导嘉宾讨论监管分层问题' },
-  { name: '李教授', profession: 'AI 伦理学专家', thinkSummary: '强调高风险 AI 的安全底线' },
-  { name: '王博士', profession: '计算机科学家 / 技术乐观派', thinkSummary: '担忧过度监管抑制创新' },
-  { name: '张律师', profession: '科技法律顾问', thinkSummary: '主张分层分级监管框架' },
-  { name: '赵研究员', profession: '产业政策研究员', thinkSummary: '建议聚焦可解释性与合规' },
-])
-
-// ═══════════════════════════════════════
-// 观点列表
-// ═══════════════════════════════════════
 interface StudioOpinion {
-  id: number
-  category: 'consensus' | 'disagreement' | 'neutral'
-  stanceSummary: string
-  confidence: number
-  evidence?: string
+  id: number; category: 'consensus'|'disagreement'|'neutral'
+  stanceSummary: string; confidence: number; evidence?: string
 }
 
-const opinions = ref<StudioOpinion[]>([
-  {
-    id: 1, category: 'consensus',
-    stanceSummary: '各方均认同对高风险 AI 应用需要进行某种形式的监管',
-    confidence: 0.92,
-    evidence: '严格监管是必要的...涉及生命安全',
-  },
-  {
-    id: 2, category: 'disagreement',
-    stanceSummary: '监管的力度和范围存在分歧——从严格审批到备案制',
-    confidence: 0.85,
-    evidence: '过度监管可能会扼杀创新...分层分级监管',
-  },
-  {
-    id: 3, category: 'consensus',
-    stanceSummary: '倾向借鉴欧盟 AI Act 的分级监管框架',
-    confidence: 0.78,
-    evidence: '欧盟的 AI Act 就是按照风险等级来分类监管的',
-  },
-])
+const messages = ref<StudioMessage[]>([])
+const guests = ref<StudioGuest[]>([])
+const opinions = ref<StudioOpinion[]>([])
+
+function now() { return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
+
+// ═══════════════════════════════════════
+// WebSocket 连接 + 事件处理
+// ═══════════════════════════════════════
+function connectWS() {
+  const discId = route.params.discId as string
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  ws = new WebSocket(`${proto}//${location.host}/ws/discussion/${discId}`)
+
+  ws.onopen = () => {
+    ws?.send(JSON.stringify({ action: 'start' }))
+  }
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data)
+    switch (data.event) {
+      case 'system':
+        if (data.message?.includes('已开始')) { status.value = 'active'; currentRound.value = 1 }
+        break
+
+      case 'guests_ready':
+        guests.value = data.guests || []
+        break
+
+      case 'host_speak':
+        msgSeq++
+        messages.value.push({
+          id: Date.now(), senderName: '主持人', senderRole: 'host',
+          content: data.content, senderColor: ROLE_COLORS[0],
+          seqNum: data.seq_num || msgSeq, time: now(),
+        })
+        scrollBottom()
+        break
+
+      case 'guest_speak':
+        msgSeq++
+        const gIdx = data.guest_id ?? 0
+        messages.value.push({
+          id: Date.now(), senderName: data.guest_name || '嘉宾', senderRole: 'guest',
+          content: data.content, senderColor: ROLE_COLORS[gIdx + 1] || ROLE_COLORS[1],
+          seqNum: data.seq_num || msgSeq, time: now(),
+        })
+        speakingIndex.value = gIdx
+        scrollBottom()
+        break
+
+      case 'speak_done':
+        speakingIndex.value = null
+        break
+
+      case 'token_stream':
+        // 流式 token 仅做视觉占位，最终消息由 host_speak / guest_speak 推送
+        break
+
+      case 'opinion_extracted':
+        opinions.value.push({
+          id: data.opinion_id || Date.now(),
+          category: data.category || 'neutral',
+          stanceSummary: data.stance_summary || '',
+          confidence: data.confidence ?? 0.5,
+          evidence: data.evidence || null,
+        })
+        break
+
+      case 'round_change':
+        currentRound.value = data.round || currentRound.value
+        break
+
+      case 'discussion_end':
+        status.value = 'done'
+        summaryReady.value = true
+        if (data.summary) summaryText.value = data.summary
+        break
+
+      case 'error':
+        console.warn('WS error:', data.message)
+        break
+    }
+  }
+
+  ws.onerror = () => { /* 静默处理 */ }
+  ws.onclose = () => { if (status.value === 'active') status.value = 'done' }
+}
 
 // ═══════════════════════════════════════
 // 自动滚动
 // ═══════════════════════════════════════
-watch(
-  () => messages.value.length,
-  async () => {
-    await nextTick()
+function scrollBottom() {
+  nextTick(() => {
     const el = transcriptRef.value
-    if (el) {
-      el.scrollTop = el.scrollHeight
-    }
-  },
-)
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+// ═══════════════════════════════════════
+// 生命周期
+// ═══════════════════════════════════════
+onMounted(() => connectWS())
+onUnmounted(() => ws?.close())
 </script>
 
 <style scoped>
