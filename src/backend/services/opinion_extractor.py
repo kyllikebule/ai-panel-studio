@@ -3,6 +3,7 @@ import json
 import logging
 from dataclasses import dataclass
 
+from src.backend.core.config import settings
 from src.backend.core.deepseek import deepseek_chat
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ async def extract_opinion(
     try:
         result = await deepseek_chat(
             messages=messages,
-            model="deepseek-chat",
+            model=settings.llm_model,
             temperature=0.3,
             max_tokens=512,
         )

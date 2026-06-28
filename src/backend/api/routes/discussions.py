@@ -9,6 +9,47 @@ from ...db.models import Discussion, Host, Guest, DiscussionGuest, Message, Opin
 
 router = APIRouter(prefix="/api/discussions", tags=["discussions"])
 
+# ═══════════════════════════════════════
+# Host 生成
+# ═══════════════════════════════════════
+class GenerateHostRequest(BaseModel):
+    topic: str = Field(..., min_length=4, max_length=200)
+
+
+class GenerateHostResponse(BaseModel):
+    name: str
+    system_prompt: str
+
+
+@router.post("/generate-host", response_model=GenerateHostResponse)
+async def generate_host(data: GenerateHostRequest):
+    from ...core.deepseek import deepseek_chat_json
+    from ...core.config import settings
+
+    prompt = (
+        f"讨论主题：{data.topic}\n"
+        f"请生成一位专业讨论主持人的名称和系统提示词。\n"
+        f"主持人名称要求：2-4个中文字，如\"张主持人\"、\"李主持\"\n"
+        f"系统提示词要求：描述主持风格，强调保持中立、引导讨论、总结观点，50-100字\n"
+        f'仅返回 JSON：{{"name":"...","system_prompt":"..."}}'
+    )
+    try:
+        result = await deepseek_chat_json(
+            [{"role": "user", "content": prompt}],
+            model=settings.llm_model,
+            temperature=0.7,
+            max_tokens=256,
+        )
+        return GenerateHostResponse(
+            name=str(result.get("name", "主持人")),
+            system_prompt=str(result.get("system_prompt", "你是专业讨论主持人，保持中立。")),
+        )
+    except Exception:
+        return GenerateHostResponse(
+            name="张主持人",
+            system_prompt="你是专业讨论主持人，保持中立，用标准中文开场、追问、串联、总结。",
+        )
+
 
 # === Schema ===
 class HostCreate(BaseModel):

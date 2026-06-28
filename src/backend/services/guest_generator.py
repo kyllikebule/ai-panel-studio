@@ -2,6 +2,7 @@
 import json
 import logging
 
+from src.backend.core.config import settings
 from src.backend.core.deepseek import deepseek_chat
 from src.logic.prompt_lib import GuestDef, GUEST_SPEAK_CONTENT
 
@@ -39,7 +40,7 @@ async def generate_guests(topic: str, count: int) -> list[GuestDef]:
     try:
         result = await deepseek_chat(
             messages=messages,
-            model="deepseek-chat",
+            model=settings.llm_model,
             temperature=0.8,
             max_tokens=2048,
         )

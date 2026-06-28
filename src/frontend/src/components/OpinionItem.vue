@@ -8,7 +8,7 @@
       >
         {{ tagLabel }}
       </el-tag>
-      <span v-if="item.confidence != null" class="opinion-confidence">
+      <span v-if="hasConfidence" class="opinion-confidence">
         置信度 {{ (item.confidence * 100).toFixed(0) }}%
       </span>
     </div>
@@ -31,20 +31,24 @@ const props = defineProps<{
   }
 }>()
 
+const hasConfidence = computed(() => props.item.confidence != null)
+
 const tagType = computed(() => {
-  return {
+  const map: Record<string, 'success' | 'danger' | 'info'> = {
     consensus: 'success',
     disagreement: 'danger',
     neutral: 'info',
-  }[props.item.category]) as 'success' | 'danger' | 'info'
+  }
+  return map[props.item.category]
 })
 
 const tagLabel = computed(() => {
-  return {
+  const map: Record<string, string> = {
     consensus: '共识',
     disagreement: '分歧',
     neutral: '中立',
-  }[props.item.category])
+  }
+  return map[props.item.category]
 })
 </script>
 

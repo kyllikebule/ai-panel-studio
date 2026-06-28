@@ -6,55 +6,78 @@ from .prompt_lib import GuestDef
 from .transcript_context import build_transcript_context
 
 
-def decide_next_speaker(
+async def decide_next_speaker_llm(
     transcript: list[dict],
     guests: list[GuestDef],
+    topic: str,
+    spoken_this_round: set[int] | None,
+    llm: Any,
 ) -> dict | None:
-    """根据 transcript 决定下一位发言嘉宾。
+    """由 LLM 根据讨论上下文 + 嘉宾立场自主决定下一位发言人。
 
-    规则：
+    规则（硬约束由代码兜底）：
     - 禁止连续同一位嘉宾发言
-    - 禁止按索引轮值（基于上下文决定）
     - 空 transcript 返回 None（由 host 开场）
 
     Returns:
-        {"guest_id": int, "reason": "举手|补充|反驳", "trigger_msg_id": int|None} | None
+        {"guest_id": int, "reason": "举手|补充|反驳"} | None
     """
     if not transcript:
         return None
 
+    spoken = spoken_this_round or set()
     last_speaker = transcript[-1].get("sender_name", "")
 
-    available = []
-    for i, g in enumerate(guests):
-        if g.name != last_speaker:
-            available.append(i)
-
-    if not available:
+    # 硬约束：排除上一发言人
+    allowed = [i for i, g in enumerate(guests) if g.name != last_speaker]
+    if not allowed:
         return None
 
-    last_guest_msgs = [m for m in reversed(transcript) if m.get("role") == "guest"]
+    # 构建嘉宾列表（含是否已发言标注）
+    guest_list = "\n".join(
+        f"[{i}] {g.name} | {g.persona} | 风格:{g.speak_style}"
+        f"{' (本轮已发言)' if i in spoken else ''}"
+        for i, g in enumerate(guests)
+    )
 
-    reason = "举手"
-    trigger_msg_id = None
+    recent = transcript[-8:]
+    transcript_text = "\n".join(
+        f"[{m.get('role','')}] {m.get('sender_name','')}: {m.get('content','')}"
+        for m in recent
+    )
 
-    if len(last_guest_msgs) >= 2:
-        last_content = last_guest_msgs[0].get("content", "")
-        prev_sender = last_guest_msgs[1].get("sender_name", "")
-        if any(kw in last_content for kw in ("不同意", "反对", "不赞同", "质疑")):
-            reason = "反驳"
-            trigger_msg_id = last_guest_msgs[1].get("id")
-        elif last_guest_msgs[0].get("sender_name") != prev_sender:
-            reason = "补充"
-            trigger_msg_id = last_guest_msgs[0].get("id")
+    prompt = (
+        f"讨论主题：{topic}\n\n"
+        f"嘉宾阵容：\n{guest_list}\n\n"
+        f"最近发言记录：\n{transcript_text}\n\n"
+        f"上一发言人是「{last_speaker}」，本轮不可再选。\n"
+        f"请从允许的嘉宾中选出**最应该接话的一位**，判断标准：\n"
+        f"1. 谁的观点与上一位最可能产生碰撞？→ reason=反驳\n"
+        f"2. 谁能为上一位的观点提供补充/延伸？→ reason=补充\n"
+        f"3. 如果上一发言没有明确攻击对象，优先选立场最对立的嘉宾 → reason=举手\n"
+        f"4. 优先让本轮还没发言的嘉宾参与\n\n"
+        f'仅返回 JSON：{{"guest_index": <int>, "reason": "<举手|补充|反驳>"}}'
+    )
 
-    chosen = available[0]
+    try:
+        result = await llm.chat_json(prompt)
+        idx = int(result.get("guest_index", -1))
+        reason = str(result.get("reason", "举手"))
 
-    return {
-        "guest_id": chosen,
-        "reason": reason,
-        "trigger_msg_id": trigger_msg_id,
-    }
+        if idx not in allowed:
+            # LLM 选了非法嘉宾 → 从 allowed 中选立场最对立的
+            idx = allowed[0]
+
+        if reason not in ("举手", "补充", "反驳"):
+            reason = "举手"
+
+        return {"guest_id": idx, "reason": reason}
+
+    except Exception:
+        # LLM 失败 → 兜底：从 allowed 中选立场差异最大的
+        if not allowed:
+            return None
+        return {"guest_id": allowed[0], "reason": "举手"}
 
 
 async def generate_speech(
@@ -105,10 +128,10 @@ async def run_discussion_flow(
     Yields:
         事件 dict: {"event": "host_open"|"guest_speak"|"round_change"|"opinion_extracted"|"discussion_end", ...}
     """
-    from .opinion_extractor import extract_opinions
+    from .opinion_extractor import extract_opinions, OpinionResult
 
     all_messages: list[dict] = []
-    all_opinions: list = []
+    all_opinions: list[OpinionResult] = []
     msg_id = 0
 
     if stop_flag.is_set():
@@ -141,21 +164,32 @@ async def run_discussion_flow(
             return
 
         yield {"event": "round_change", "round": round_num}
+        await broadcast(discussion_id, {"event": "round_change", "round": round_num})
         spoken_this_round: set[int] = set()
 
         for _ in range(len(guests)):
             if stop_flag.is_set():
                 break
 
-            decision = decide_next_speaker(all_messages, guests)
+            decision = await decide_next_speaker_llm(
+                all_messages, guests, topic, spoken_this_round, llm)
             if decision is None:
                 break
 
             guest_idx = decision["guest_id"]
-            if guest_idx in spoken_this_round:
-                continue
-
             guest = guests[guest_idx]
+
+            # 1. 广播「准备发言」状态
+            await broadcast(discussion_id, {
+                "event": "guest_preparing",
+                "guest_id": guest_idx,
+                "guest_name": guest.name,
+                "reason": decision["reason"],
+            })
+            yield {"event": "guest_preparing", "guest_id": guest_idx,
+                   "guest_name": guest.name, "reason": decision["reason"]}
+
+            # 2. 生成发言
             speech = await generate_speech(guest, all_messages, decision["reason"], topic, llm)
 
             msg_id += 1
@@ -165,6 +199,7 @@ async def run_discussion_flow(
             })
             spoken_this_round.add(guest_idx)
 
+            # 3. 广播发言
             yield {
                 "event": "guest_speak",
                 "guest_id": guest_idx,
@@ -181,19 +216,35 @@ async def run_discussion_flow(
                 "seq_num": msg_id,
                 "reason": decision["reason"],
             })
-            yield {"event": "speak_done", "guest_id": guest_idx}
 
+            # 4. 清除发言状态
+            yield {"event": "speak_done", "guest_id": guest_idx}
+            await broadcast(discussion_id, {"event": "speak_done", "guest_id": guest_idx})
+
+        # 每轮结束后统一提取观点（基于本轮完整上下文）
+        if not stop_flag.is_set():
             try:
-                new_ops = await extract_opinions(all_messages[-3:], all_opinions, llm)
-                for op in new_ops:
-                    op_dict = {
+                round_start = max(0, len(all_messages) - len(guests) * 2)
+                round_messages = all_messages[round_start:]
+                new_ops = await extract_opinions(round_messages, all_opinions, llm)
+                all_opinions.extend(new_ops)
+                # 发送当前所有观点
+                opinions_payload = [
+                    {
                         "stance_summary": op.stance_summary,
                         "category": op.category,
                         "confidence": op.confidence,
                         "evidence": op.evidence,
                     }
-                    all_opinions.append(op_dict)
-                    yield {"event": "opinion_extracted", **op_dict}
+                    for op in all_opinions
+                ]
+                await broadcast(discussion_id, {
+                    "event": "opinions_updated",
+                    "opinions": opinions_payload,
+                    "new_count": len(new_ops),
+                })
+                yield {"event": "opinions_updated",
+                       "opinions": opinions_payload, "new_count": len(new_ops)}
             except Exception:
                 pass
 

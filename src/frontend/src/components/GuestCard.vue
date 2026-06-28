@@ -1,23 +1,23 @@
 <template>
   <div
     class="guest-card"
-    :class="{ speaking: isSpeaking, idle: !isSpeaking }"
+    :class="stateClass"
     :style="{ '--card-color': colorTheme }"
   >
     <div class="guest-avatar">{{ guest.name[0] }}</div>
     <div class="guest-body">
       <div class="guest-top">
         <span class="guest-name">{{ guest.name }}</span>
-        <span class="guest-status" :class="isSpeaking ? 'live' : 'idle'">
-          {{ isSpeaking ? '发言中' : '待机' }}
+        <span class="guest-status" :class="statusClass">
+          {{ statusLabel }}
         </span>
       </div>
-      <span class="guest-profession">{{ guest.profession }}</span>
+      <span class="guest-profession">{{ guest.persona }}</span>
       <p v-if="guest.thinkSummary" class="guest-think">
         💭 {{ guest.thinkSummary }}
       </p>
     </div>
-    <div v-if="isSpeaking" class="speaking-dots">
+    <div v-if="speakingState !== 'idle'" class="speaking-dots">
       <span class="dot"></span>
       <span class="dot"></span>
       <span class="dot"></span>
@@ -26,15 +26,37 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+
+const props = defineProps<{
   guest: {
     name: string
-    profession: string
+    persona: string
     thinkSummary?: string
   }
-  isSpeaking: boolean
+  speakingState: 'idle' | 'preparing' | 'speaking'
   colorTheme: string
 }>()
+
+const stateClass = computed(() => ({
+  speaking: props.speakingState === 'speaking',
+  preparing: props.speakingState === 'preparing',
+  idle: props.speakingState === 'idle',
+}))
+
+const statusClass = computed(() => ({
+  live: props.speakingState === 'speaking',
+  preparing: props.speakingState === 'preparing',
+  idle: props.speakingState === 'idle',
+}))
+
+const statusLabel = computed(() => {
+  switch (props.speakingState) {
+    case 'speaking': return '发言中'
+    case 'preparing': return '准备中…'
+    default: return '待机'
+  }
+})
 </script>
 
 <style scoped>
@@ -53,6 +75,17 @@ defineProps<{
   border-color: var(--card-color);
   background: color-mix(in srgb, var(--card-color) 10%, transparent);
   box-shadow: 0 0 12px color-mix(in srgb, var(--card-color) 30%, transparent);
+}
+
+.guest-card.preparing {
+  border-color: color-mix(in srgb, var(--card-color) 50%, transparent);
+  background: color-mix(in srgb, var(--card-color) 5%, transparent);
+  animation: pulse-border 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: color-mix(in srgb, var(--card-color) 30%, transparent); }
+  50%      { border-color: var(--card-color); }
 }
 
 .guest-avatar {
@@ -98,9 +131,20 @@ defineProps<{
   color: var(--card-color);
 }
 
+.guest-status.preparing {
+  background: color-mix(in srgb, var(--card-color) 15%, transparent);
+  color: var(--card-color);
+  animation: pulse-text 1.2s ease-in-out infinite;
+}
+
 .guest-status.idle {
   background: rgba(255, 255, 255, 0.06);
   color: var(--color-text-muted, #6b7280);
+}
+
+@keyframes pulse-text {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }
 
 .guest-profession {

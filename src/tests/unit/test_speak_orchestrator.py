@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 from src.logic.prompt_lib import GuestDef
 from src.logic.speak_orchestrator import (
-    decide_next_speaker,
+    decide_next_speaker_llm,
     generate_speech,
     run_discussion_flow,
 )
@@ -43,9 +43,8 @@ def mock_llm():
         "choices": [{"message": {"content": "大家好，今天我们讨论AI监管问题。"}}]
     })
     client.chat_json = AsyncMock(return_value={
-        "guest_id": 0,
+        "guest_index": 0,
         "reason": "举手",
-        "trigger_msg_id": None,
     })
     return client
 
@@ -62,31 +61,49 @@ def mock_stop_flag():
 
 class TestDecideNextSpeaker:
 
-    def test_not_same_as_last_speaker(self, transcript_with_last_speaker):
-        result = decide_next_speaker(transcript_with_last_speaker, GUESTS)
+    @pytest.mark.asyncio
+    async def test_not_same_as_last_speaker(self, transcript_with_last_speaker, mock_llm):
+        mock_llm.chat_json = AsyncMock(return_value={"guest_index": 1, "reason": "举手"})
+        result = await decide_next_speaker_llm(
+            transcript_with_last_speaker, GUESTS, "AI监管", None, mock_llm)
         if result:
             last_speaker = transcript_with_last_speaker[-1]["sender_name"]
             guest = GUESTS[result["guest_id"]]
             assert guest.name != last_speaker
 
-    def test_empty_transcript(self):
-        result = decide_next_speaker([], GUESTS)
+    @pytest.mark.asyncio
+    async def test_empty_transcript(self, mock_llm):
+        result = await decide_next_speaker_llm([], GUESTS, "AI监管", None, mock_llm)
         assert result is None
 
-    def test_no_consecutive_same_guest(self):
+    @pytest.mark.asyncio
+    async def test_no_consecutive_same_guest(self, mock_llm):
+        mock_llm.chat_json = AsyncMock(return_value={"guest_index": 2, "reason": "补充"})
         transcript = [
             {"id": 1, "role": "guest", "sender_name": "李教授", "content": "..."},
             {"id": 2, "role": "guest", "sender_name": "王博士", "content": "..."},
             {"id": 3, "role": "guest", "sender_name": "李教授", "content": "..."},
         ]
-        result = decide_next_speaker(transcript, GUESTS)
+        result = await decide_next_speaker_llm(
+            transcript, GUESTS, "AI监管", None, mock_llm)
         if result:
             assert GUESTS[result["guest_id"]].name != "李教授"
 
-    def test_returns_valid_reason(self, transcript_with_rebuttal):
-        result = decide_next_speaker(transcript_with_rebuttal, GUESTS)
+    @pytest.mark.asyncio
+    async def test_returns_valid_reason(self, transcript_with_rebuttal, mock_llm):
+        mock_llm.chat_json = AsyncMock(return_value={"guest_index": 2, "reason": "反驳"})
+        result = await decide_next_speaker_llm(
+            transcript_with_rebuttal, GUESTS, "AI监管", None, mock_llm)
         if result:
             assert result["reason"] in ("举手", "补充", "反驳")
+
+    @pytest.mark.asyncio
+    async def test_llm_fallback_on_error(self, transcript_with_rebuttal, mock_llm):
+        mock_llm.chat_json = AsyncMock(side_effect=Exception("API error"))
+        result = await decide_next_speaker_llm(
+            transcript_with_rebuttal, GUESTS, "AI监管", None, mock_llm)
+        assert result is not None
+        assert result["reason"] in ("举手", "补充", "反驳")
 
 
 class TestGenerateSpeech:
@@ -127,7 +144,7 @@ class TestRunDiscussionFlow:
             "choices": [{"message": {"content": "大家好，今天我们讨论AI监管问题。"}}]
         })
         mock_llm.chat_json = AsyncMock(return_value={
-            "guest_id": 0, "reason": "举手", "trigger_msg_id": None,
+            "guest_index": 0, "reason": "举手",
         })
 
         events = []
@@ -148,7 +165,7 @@ class TestRunDiscussionFlow:
             "choices": [{"message": {"content": "测试内容"}}]
         })
         mock_llm.chat_json = AsyncMock(return_value={
-            "guest_id": 0, "reason": "举手", "trigger_msg_id": None,
+            "guest_index": 0, "reason": "举手",
         })
 
         events = []
@@ -167,7 +184,7 @@ class TestRunDiscussionFlow:
             "choices": [{"message": {"content": "测试内容"}}]
         })
         mock_llm.chat_json = AsyncMock(return_value={
-            "guest_id": 0, "reason": "举手", "trigger_msg_id": None,
+            "guest_index": 0, "reason": "举手",
         })
 
         stop_flag = asyncio.Event()

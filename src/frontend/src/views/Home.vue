@@ -47,53 +47,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import DiscussCard from '@/components/DiscussCard.vue'
 import type { DiscussionItem } from '@/components/DiscussCard.vue'
+import { useDiscussionStore } from '@/stores/discussion'
 
-const discussions = ref<DiscussionItem[]>([
-  {
-    id: 1,
-    topic: 'AI 是否应该被严格监管？',
-    hostName: '张主持人',
-    status: 'completed',
-    currentRound: 5,
-    maxRounds: 5,
-    guestCount: 4,
-    createdAt: '2026-06-25',
-  },
-  {
-    id: 2,
-    topic: '量子计算对密码学的冲击',
-    hostName: '李教授',
-    status: 'active',
-    currentRound: 3,
-    maxRounds: 6,
-    guestCount: 3,
-    createdAt: '2026-06-26',
-  },
-  {
-    id: 3,
-    topic: 'Web3 与去中心化治理的未来',
-    hostName: '王博士',
-    status: 'pending',
-    currentRound: 0,
-    maxRounds: 5,
-    guestCount: 5,
-    createdAt: '2026-06-27',
-  },
-  {
-    id: 4,
-    topic: '人工智能伦理边界探索',
-    hostName: '赵研究员',
-    status: 'paused',
-    currentRound: 2,
-    maxRounds: 4,
-    guestCount: 4,
-    createdAt: '2026-06-24',
-  },
-])
+const store = useDiscussionStore()
+const discussions = ref<DiscussionItem[]>([])
+
+onMounted(async () => {
+  await store.fetchDiscussions()
+  discussions.value = store.discussions.map(d => ({
+    id: d.id,
+    topic: d.topic,
+    hostName: d.host_name,
+    status: d.status as DiscussionItem['status'],
+    currentRound: d.current_round,
+    maxRounds: d.max_rounds,
+    guestCount: d.guest_count ?? 0,
+    createdAt: d.created_at?.slice(0, 10) ?? '',
+  }))
+})
 </script>
 
 <style scoped>

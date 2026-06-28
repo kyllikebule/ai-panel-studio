@@ -2,6 +2,7 @@
 import json
 import logging
 
+from src.backend.core.config import settings
 from src.backend.core.deepseek import deepseek_chat
 from src.logic.prompt_lib import GuestDef
 
@@ -59,7 +60,7 @@ async def decide_next_speaker(
     try:
         result = await deepseek_chat(
             messages=messages,
-            model="deepseek-chat",
+            model=settings.llm_model,
             temperature=0.5,
             max_tokens=128,
         )
@@ -135,7 +136,7 @@ async def generate_speech(
     try:
         result = await deepseek_chat(
             messages=messages,
-            model="deepseek-chat",
+            model=settings.llm_model,
             temperature=0.7,
             max_tokens=256,
         )
@@ -204,7 +205,7 @@ async def generate_host_summary(
     try:
         result = await deepseek_chat(
             messages=messages,
-            model="deepseek-chat",
+            model=settings.llm_model,
             temperature=0.5,
             max_tokens=1024,
         )

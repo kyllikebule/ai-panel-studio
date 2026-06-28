@@ -173,19 +173,8 @@ function validateTopic() {
 }
 
 // ═══════════════════════════════════════
-// 生成嘉宾（模拟 AI 生成）
+// 生成嘉宾 — 调用 AI API 动态生成
 // ═══════════════════════════════════════
-const MOCK_GUESTS: Record<string, GuestPreview[]> = {
-  default: [
-    { name: '李教授', persona: 'AI 伦理学专家，主张审慎监管', speakStyle: '学术严谨' },
-    { name: '王博士', persona: '计算机科学家，技术乐观派', speakStyle: '理性分析' },
-    { name: '张律师', persona: '科技法律顾问，关注合规', speakStyle: '法律实务' },
-    { name: '赵研究员', persona: '产业政策研究员，宏观视角', speakStyle: '政策导向' },
-    { name: '陈总', persona: 'AI 企业创始CEO，行业深耕', speakStyle: '实战经验' },
-    { name: '孙记者', persona: '科技媒体人，公众视角', speakStyle: '犀利追问' },
-  ],
-}
-
 async function generateGuests() {
   validateTopic()
   if (topicError.value) return
@@ -193,30 +182,57 @@ async function generateGuests() {
   generating.value = true
   guestPreviews.value = []
 
-  // 模拟 AI 生成延迟
-  await new Promise(r => setTimeout(r, 800))
-
-  const pool = MOCK_GUESTS.default
-  guestPreviews.value = pool.slice(0, expertCount.value)
-  generating.value = false
+  try {
+    const res = await fetch('/api/guests/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: topic.value.trim(), count: expertCount.value }),
+    })
+    if (!res.ok) throw new Error(`API error: ${res.status}`)
+    const data = await res.json()
+    guestPreviews.value = (data.guests || []).map((g: any) => ({
+      name: g.name,
+      persona: g.persona,
+      speakStyle: g.speak_style,
+    }))
+  } catch (e) {
+    console.error('生成嘉宾失败:', e)
+  } finally {
+    generating.value = false
+  }
 }
 
 // ═══════════════════════════════════════
-// 进入演播厅：创建讨论 → 创建嘉宾模板 → 关联嘉宾 → 跳转演播厅
+// 进入演播厅：生成主持人 → 创建讨论 → 创建嘉宾模板 → 关联嘉宾 → 跳转演播厅
 // ═══════════════════════════════════════
 async function enterStudio() {
   entering.value = true
   try {
+    // 0. 调用 AI 生成主持人
+    let hostName = '张主持人'
+    let hostPrompt = '你是专业讨论主持人，保持中立，用标准中文开场、追问、串联、总结。'
+    try {
+      const hRes = await fetch('/api/discussions/generate-host', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic.value }),
+      })
+      if (hRes.ok) {
+        const h = await hRes.json()
+        hostName = h.name
+        hostPrompt = h.system_prompt
+      }
+    } catch (e) {
+      console.warn('Host generation failed, using fallback:', e)
+    }
+
     // 1. POST /api/discussions → 创建讨论（含主持人）
     const dRes = await fetch('/api/discussions/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         topic: topic.value,
-        host: {
-          name: '张主持人',
-          system_prompt: '你是专业讨论主持人，保持中立，用标准中文开场、追问、串联、总结。',
-        },
+        host: { name: hostName, system_prompt: hostPrompt },
         max_rounds: expertCount.value,
       }),
     })

@@ -80,44 +80,82 @@ async def studio_ws(websocket: WebSocket, discussion_id: int):
 
 
 async def _run_ai_flow(discussion_id: int, stop_flag: asyncio.Event):
-    """调用真实 AI 编排流程。无嘉宾时使用演示数据。"""
+    """从数据库加载讨论数据，调用真实 AI 编排流程。"""
+    from sqlalchemy import select
     from src.logic.speak_orchestrator import run_discussion_flow
     from src.logic.prompt_lib import GuestDef
     from src.backend.core.deepseek import deepseek_chat, deepseek_chat_json
+    from src.backend.core.config import settings
+    from src.backend.db.database import async_session
+    from src.backend.db.models import Discussion, Host, Guest, DiscussionGuest
 
     class LLMClient:
         async def chat(self, messages: list[dict]) -> dict:
-            return await deepseek_chat(messages)
+            return await deepseek_chat(messages, model=settings.llm_model)
 
         async def chat_json(self, prompt: str) -> dict:
-            return await deepseek_chat_json([{"role": "user", "content": prompt}])
-
-    host = {"name": "张主持人", "system_prompt": "你是专业讨论主持人，保持中立，用标准中文开场、追问、串联、总结。"}
-    guests = [
-        GuestDef(name="李教授", persona="AI伦理学专家，主张对高风险AI严格监管",
-                 system_prompt="你是李教授，AI伦理学专家。发言时引用学术研究，语气平和但有分量。",
-                 speak_style="学术严谨"),
-        GuestDef(name="王博士", persona="计算机科学家，技术乐观派",
-                 system_prompt="你是王博士，计算机科学家。发言时注重逻辑和数据，强调技术发展的重要性。",
-                 speak_style="理性分析"),
-        GuestDef(name="张律师", persona="科技法律顾问，关注监管与创新的平衡",
-                 system_prompt="你是张律师，科技法律顾问。发言时从法律实务角度出发，强调可操作性。",
-                 speak_style="法律实务"),
-    ]
-
-    llm = LLMClient()
+            return await deepseek_chat_json([{"role": "user", "content": prompt}], model=settings.llm_model)
 
     async def _broadcast(disc_id: int, payload: dict):
         event = payload.pop("event", "system")
         await broadcast(disc_id, event, payload)
 
+    async with async_session() as db:
+        # 1. 加载讨论
+        discussion = await db.get(Discussion, discussion_id)
+        if not discussion:
+            await broadcast(discussion_id, "error", {"message": f"讨论 #{discussion_id} 不存在"})
+            return
+
+        # 2. 加载主持人
+        host_record = await db.get(Host, discussion.host_id)
+        if not host_record:
+            await broadcast(discussion_id, "error", {"message": "主持人不存在"})
+            return
+        host = {"name": host_record.name, "system_prompt": host_record.system_prompt}
+
+        # 3. 加载嘉宾
+        result = await db.execute(
+            select(DiscussionGuest, Guest)
+            .join(Guest, DiscussionGuest.guest_id == Guest.id)
+            .where(DiscussionGuest.discussion_id == discussion_id)
+        )
+        rows = result.all()
+        if not rows:
+            await broadcast(discussion_id, "error", {"message": "讨论没有嘉宾"})
+            return
+
+        guest_defs = []
+        guest_list = []
+        for dg, g in rows:
+            persona = dg.stance_override or g.persona
+            guest_defs.append(GuestDef(
+                name=g.name,
+                persona=persona,
+                system_prompt=g.system_prompt,
+                speak_style=g.speak_style or "",
+            ))
+            guest_list.append({
+                "guest_id": g.id,
+                "name": g.name,
+                "persona": persona,
+                "speak_style": g.speak_style or "",
+            })
+
+        # 4. 发送嘉宾就绪事件
+        await broadcast(discussion_id, "guests_ready", {"guests": guest_list})
+
+        max_rounds = discussion.max_rounds or 5
+
+    llm = LLMClient()
+
     try:
-        async for event in run_discussion_flow(
+        async for _event in run_discussion_flow(
             discussion_id=discussion_id,
-            topic="AI 是否应该被严格监管？",
+            topic=discussion.topic,
             host=host,
-            guests=guests,
-            max_rounds=2,
+            guests=guest_defs,
+            max_rounds=max_rounds,
             llm=llm,
             broadcast=_broadcast,
             stop_flag=stop_flag,

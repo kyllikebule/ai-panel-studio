@@ -69,7 +69,7 @@
                 v-for="(g, idx) in guests"
                 :key="idx"
                 :guest="g"
-                :is-speaking="speakingIndex === idx"
+                :speaking-state="guestSpeakState[idx] || 'idle'"
                 :color-theme="ROLE_COLORS[idx]"
               />
               <el-empty
@@ -128,7 +128,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import ChatMessage from '@/components/ChatMessage.vue'
@@ -136,6 +136,7 @@ import GuestCard from '@/components/GuestCard.vue'
 import OpinionItem from '@/components/OpinionItem.vue'
 
 const route = useRoute()
+const discId = route.params.discId as string
 
 // ═══════════════════════════════════════
 // 角色色板
@@ -147,11 +148,13 @@ const ROLE_COLORS = [
 // ═══════════════════════════════════════
 // 讨论状态
 // ═══════════════════════════════════════
-const topic = ref('AI 是否应该被严格监管？')
+const topic = ref('加载中...')
 const currentRound = ref(0)
 const maxRounds = ref(5)
 const status = ref<'idle' | 'active' | 'done'>('idle')
 const speakingIndex = ref<number | null>(null)
+// 每个嘉宾的独立发言状态: 'idle' | 'preparing' | 'speaking'
+const guestSpeakState = ref<Record<number, 'idle' | 'preparing' | 'speaking'>>({})
 const summaryReady = ref(false)
 const summaryText = ref('')
 const transcriptRef = ref<HTMLElement | null>(null)
@@ -167,7 +170,7 @@ interface StudioMessage {
   tokenCount?: number; time: string; isStreaming?: boolean
 }
 interface StudioGuest {
-  name: string; profession: string; thinkSummary?: string
+  name: string; persona: string; thinkSummary?: string
 }
 interface StudioOpinion {
   id: number; category: 'consensus'|'disagreement'|'neutral'
@@ -181,15 +184,28 @@ const opinions = ref<StudioOpinion[]>([])
 function now() { return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
 
 // ═══════════════════════════════════════
+// 从 API 加载讨论数据
+// ═══════════════════════════════════════
+async function loadDiscussion() {
+  try {
+    const res = await fetch(`/api/discussions/${discId}`)
+    const detail = await res.json()
+    topic.value = detail.topic || '讨论'
+    maxRounds.value = detail.max_rounds || 5
+  } catch (e) {
+    console.warn('加载讨论数据失败:', e)
+  }
+}
+
+// ═══════════════════════════════════════
 // WebSocket 连接 + 事件处理
 // ═══════════════════════════════════════
 function connectWS() {
-  const discId = route.params.discId as string
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   ws = new WebSocket(`${proto}//${location.host}/ws/discussion/${discId}`)
 
   ws.onopen = () => {
-    ws?.send(JSON.stringify({ action: 'start' }))
+    // 不自动开始，等待用户点击「开始讨论」
   }
 
   ws.onmessage = (e) => {
@@ -200,17 +216,27 @@ function connectWS() {
         break
 
       case 'guests_ready':
-        guests.value = data.guests || []
+        guests.value = (data.guests || []).map((g: any) => ({
+          name: g.name || '',
+          persona: g.persona || '',
+        }))
         break
 
-      case 'host_speak':
+      case 'host_open':
         msgSeq++
         messages.value.push({
-          id: Date.now(), senderName: '主持人', senderRole: 'host',
+          id: Date.now(), senderName: data.host_name || '主持人', senderRole: 'host',
           content: data.content, senderColor: ROLE_COLORS[0],
           seqNum: data.seq_num || msgSeq, time: now(),
         })
         scrollBottom()
+        break
+
+      case 'guest_preparing':
+        guestSpeakState.value = {
+          ...guestSpeakState.value,
+          [data.guest_id ?? 0]: 'preparing',
+        }
         break
 
       case 'guest_speak':
@@ -222,25 +248,30 @@ function connectWS() {
           seqNum: data.seq_num || msgSeq, time: now(),
         })
         speakingIndex.value = gIdx
+        guestSpeakState.value = {
+          ...guestSpeakState.value,
+          [gIdx]: 'speaking',
+        }
         scrollBottom()
         break
 
       case 'speak_done':
         speakingIndex.value = null
+        guestSpeakState.value = {
+          ...guestSpeakState.value,
+          [data.guest_id ?? 0]: 'idle',
+        }
         break
 
-      case 'token_stream':
-        // 流式 token 仅做视觉占位，最终消息由 host_speak / guest_speak 推送
-        break
-
-      case 'opinion_extracted':
-        opinions.value.push({
-          id: data.opinion_id || Date.now(),
-          category: data.category || 'neutral',
-          stanceSummary: data.stance_summary || '',
-          confidence: data.confidence ?? 0.5,
-          evidence: data.evidence || null,
-        })
+      case 'opinions_updated':
+        // 以完整列表替换（按轮次增量更新）
+        opinions.value = (data.opinions || []).map((op: any) => ({
+          id: Date.now() + Math.random(),
+          category: op.category || 'neutral',
+          stanceSummary: op.stance_summary || '',
+          confidence: op.confidence ?? 0.5,
+          evidence: op.evidence || null,
+        }))
         break
 
       case 'round_change':
@@ -276,7 +307,10 @@ function scrollBottom() {
 // ═══════════════════════════════════════
 // 生命周期
 // ═══════════════════════════════════════
-onMounted(() => connectWS())
+onMounted(async () => {
+  await loadDiscussion()
+  connectWS()
+})
 onUnmounted(() => ws?.close())
 </script>
 
